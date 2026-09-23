@@ -1,0 +1,8 @@
+{
+  "vendor": "northstar",
+  "products": [
+    { "sku": "desk-100", "name": "Northstar Desk Phone", "price": "129.99", "stock": 42 },
+    { "sku": "headset-200", "name": "Northstar USB Headset", "price": "59.50", "stock": 18 },
+    { "sku": "adapter-300", "name": "Northstar Network Adapter", "price": "34.00", "stock": 0 }
+  ]
+}
