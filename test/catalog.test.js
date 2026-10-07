@@ -114,3 +114,78 @@ test('HTTP API enforces auth, errors, size limits, cursor pages and import repla
   assert.equal((await fetch(base + '/v1/products?after=-1', { headers })).status, 400);
   assert.equal((await fetch(base + '/v1/products/999/history', { headers })).status, 404);
 });
+
+test('a failed logging sink cannot break a committed import or its retry', async t => {
+  const catalog = openCatalog();
+  const token = 'test-token-long-enough-for-local-tests';
+  const app = createApp({ catalog, token, logger() { throw new Error('Logging unavailable'); } });
+  app.listen(0, '127.0.0.1'); await once(app, 'listening');
+  t.after(async () => { await new Promise(resolve => app.close(resolve)); catalog.close(); });
+  const base = `http://127.0.0.1:${app.address().port}`;
+  const options = { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'idempotency-key': 'logging-failure' }, body: JSON.stringify(feed()) };
+  const first = await fetch(base + '/v1/imports', options);
+  assert.equal(first.status, 201);
+  const receipt = await first.json();
+  const retry = await fetch(base + '/v1/imports', options);
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json()).id, receipt.id);
+  assert.equal(catalog.history(catalog.list().data[0].id).length, 1);
+});
+
+test('failed audit write restores existing product values and leaves the key reusable', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'catalog-update-rollback-'));
+  let catalog; let raw;
+  try {
+    const filename = join(dir, 'catalog.sqlite');
+    catalog = openCatalog(filename);
+    catalog.ingest(feed(), 'original');
+    const before = catalog.list();
+    raw = new DatabaseSync(filename);
+    raw.exec(`CREATE TRIGGER fail_audit BEFORE INSERT ON changes
+      BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END;`);
+    const changed = feed(); changed.products[0].stock = 9;
+    assert.throws(() => catalog.ingest(changed, 'retry-update'), /audit unavailable/);
+    assert.deepEqual(catalog.list(), before);
+    assert.equal(raw.prepare('SELECT count(*) n FROM imports').get().n, 1);
+    assert.equal(raw.prepare('SELECT count(*) n FROM changes').get().n, 2);
+    raw.exec('DROP TRIGGER fail_audit');
+    assert.equal(catalog.ingest(changed, 'retry-update').updated, 1);
+  } finally { raw?.close(); catalog?.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('independent SQLite connections serialize competing imports with the same key', { timeout: 15000 }, async t => {
+  const { Worker } = await import('node:worker_threads');
+  const dir = mkdtempSync(join(tmpdir(), 'catalog-contention-'));
+  const filename = join(dir, 'catalog.sqlite');
+  const initial = openCatalog(filename); initial.close();
+  const workers = [];
+  t.after(async () => { await Promise.all(workers.map(worker => worker.terminate())); rmSync(dir, { recursive: true, force: true }); });
+  for (let index = 0; index < 2; index++) {
+    const worker = new Worker(`
+      const { parentPort, workerData } = require('node:worker_threads');
+      (async () => {
+        const { openCatalog } = await import(workerData.module);
+        const catalog = openCatalog(workerData.filename);
+        parentPort.once('message', () => {
+          let result;
+          try { result = catalog.ingest(workerData.feed, 'same-key'); }
+          finally { catalog.close(); }
+          parentPort.postMessage(result);
+        });
+        parentPort.postMessage('ready');
+      })();
+    `, { eval: true, workerData: { module: new URL('../src/catalog.js', import.meta.url).href, filename, feed: feed() } });
+    workers.push(worker);
+    await once(worker, 'message');
+  }
+  const replies = workers.map(worker => once(worker, 'message'));
+  workers.forEach(worker => worker.postMessage('go'));
+  const results = (await Promise.all(replies)).map(([result]) => result);
+  assert.equal(results.filter(result => result.replayed).length, 1);
+  assert.equal(results[0].id, results[1].id);
+  const catalog = openCatalog(filename);
+  try {
+    assert.equal(catalog.list().data.length, 2);
+    assert.ok(catalog.list().data.every(product => catalog.history(product.id).length === 1));
+  } finally { catalog.close(); }
+});

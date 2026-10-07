@@ -8,6 +8,11 @@ A Node.js REST API that validates supplier JSON, normalizes product identifiers,
 
 Independent personal portfolio project. All supplier names and products are synthetic; this repository contains no employer code or data.
 
+## Learn the project
+
+- [Technical manual](docs/technical-manual.md): ingestion contracts, schema, locking, failure labs, and extension solutions.
+- [Product story](docs/product-story.md): hypothetical workflow, intended users, honest limits, and demo narration.
+
 ## Run the demo
 
 Requires **Node.js 24.x**. No dependency installation, API keys, or external services are needed for the demo.
@@ -110,7 +115,7 @@ All routes except `/health` require `Authorization: Bearer …`.
 - Stock is a nonnegative integer up to 10,000,000.
 - A batch contains 1–1,000 products, with a 1 MiB HTTP body limit. Duplicate normalized SKUs reject the whole batch.
 - Keys are global to this API instance. Same key + same normalized feed replays the receipt. Same key + changed feed returns `409`.
-- Reordering products, changing vendor/SKU case, and surrounding whitespace do not change the normalized fingerprint. Unsupported extra fields are ignored.
+- Reordering products, changing vendor/SKU case, and surrounding whitespace in vendor/SKU/name do not change the normalized fingerprint. Price strings must already match the exact decimal format. Unsupported extra fields are ignored.
 - Unchanged products produce no new audit entry. Missing products are retained; the feed is an upsert batch, not a deletion instruction.
 
 Errors use `{ "error": "…", "request_id": "…" }`. Typical statuses: `400` malformed request, `401` unauthenticated, `409` key conflict, `413` too large, `415` wrong content type, `422` invalid feed.

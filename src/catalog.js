@@ -45,9 +45,9 @@ export function normalizeFeed(feed) {
 export function openCatalog(filename = ':memory:') {
   const db = new DatabaseSync(filename);
   db.exec(`
+    PRAGMA busy_timeout=5000;
     PRAGMA journal_mode=WAL;
     PRAGMA foreign_keys=ON;
-    PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS products (
       id INTEGER PRIMARY KEY, vendor TEXT NOT NULL, sku TEXT NOT NULL,
       name TEXT NOT NULL, price_cents INTEGER NOT NULL CHECK(price_cents >= 0),
