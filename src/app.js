@@ -36,7 +36,11 @@ export function createApp({ catalog, token, logger = () => {} }) {
     const send = (status, data) => {
       res.writeHead(status, { 'content-type': 'application/json', 'x-request-id': requestId, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
       res.end(JSON.stringify(data));
-      logger({ request_id: requestId, method: req.method, status, duration_ms: Math.round(performance.now() - start) });
+      // A logging sink must not turn a committed import into a second response
+      // or an unhandled rejection after the response headers were sent.
+      try {
+        logger({ request_id: requestId, method: req.method, status, duration_ms: Math.round(performance.now() - start) });
+      } catch { console.error('Request logger failed'); }
     };
     try {
       const url = new URL(req.url, 'http://localhost');
